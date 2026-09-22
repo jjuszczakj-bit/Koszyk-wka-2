@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Koszykówka — Licznik punktów NBA</title>
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Licznik">
+<meta name="theme-color" content="#0f1320">
+<script>
+/* Rejestracja service workera — pozwala działać offline po dodaniu do ekranu
+   głównego iPada. Działa tylko po otwarciu przez http(s); pod file:// (lub
+   w podglądzie pliku) po prostu nic nie robi. */
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>{navigator.serviceWorker.register("service-worker.js").catch(()=>{});});
+}
+</script>
+<style>
+:root{
+  color-scheme: dark;
+  --bg:#0f1320; --panel:#171c2e; --panel2:#1e2540; --line:#2b3354;
+  --txt:#f4f6fb; --muted:#9aa6c7; --accent:#ff8a1e; --accent2:#1d8cff;
+  --granat:#1d3fa8; --granat-soft:#2447b8; --czerw:#c4232a; --czerw-soft:#d83b41;
+  --good:#27c08a; --bad:#ff5d6c; --gold:#ffce4d;
+}
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{background:var(--bg);color:var(--txt);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+body{min-height:100vh}
+.wrap{max-width:1100px;margin:0 auto;padding:14px}
+h1{font-size:20px;font-weight:800;letter-spacing:.3px}
+.sub{color:var(--muted);font-size:13px;margin-top:2px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:16px;padding:16px;margin-top:14px}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+.btn{cursor:pointer;border:none;border-radius:12px;padding:11px 16px;font-size:15px;font-weight:700;color:#fff;background:var(--panel2);border:1px solid var(--line);transition:.12s;user-select:none}
+.btn:hover{filter:brightness(1.12)}
+.btn:active{transform:scale(.96)}
+.btn.accent{background:var(--accent);color:#15110a;border-color:transparent}
+.btn.blue{background:var(--accent2);border-color:transparent}
+.btn.ghost{background:transparent}
+.btn.sm{padding:7px 11px;font-size:13px;border-radius:10px}
+.btn.big{padding:14px 20px;font-size:17px}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+label.fld{display:flex;flex-direction:column;gap:5px;font-size:12px;color:var(--muted);font-weight:600}
+input[type=text],input[type=date],select{background:var(--panel2);border:1px solid var(--line);color:var(--txt);border-radius:10px;padding:10px 12px;font-size:15px;font-family:inherit}
+
+/* ---- CLOCK ---- */
+.clockbar{display:flex;align-items:center;justify-content:center;gap:14px;flex-wrap:wrap;background:linear-gradient(180deg,#131a35,#0c1020);border:1px solid var(--line);border-radius:16px;padding:12px;margin-top:12px}
+.clockbar .half{font-size:13px;font-weight:800;letter-spacing:1px;text-transform:uppercase;color:var(--gold);min-width:96px;text-align:center}
+.clockbar .time{font-size:46px;font-weight:900;font-variant-numeric:tabular-nums;letter-spacing:1px;line-height:1}
+.clockbar .time.run{color:var(--good)}
+.clockbar .time.ending{color:var(--bad);animation:tick 1s infinite}
+@keyframes tick{50%{opacity:.45}}
+.clockbar .time.done{color:var(--bad)}
+.clockctrl{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.hidden{display:none!important}
+
+/* ---- SETUP ---- */
+.pool{display:flex;flex-wrap:wrap;gap:8px;margin-top:8px}
+.chip{cursor:pointer;border-radius:999px;padding:8px 13px;font-size:14px;font-weight:700;background:var(--panel2);border:1px solid var(--line);display:flex;align-items:center;gap:7px;transition:.12s}
+.chip .avg{font-size:11px;color:var(--muted);font-weight:600}
+.chip.g{background:var(--granat);border-color:var(--granat-soft)}
+.chip.c{background:var(--czerw);border-color:var(--czerw-soft)}
+.chip.g .avg,.chip.c .avg{color:#dfe6ff}
+.chip .tag{font-size:10px;opacity:.85;background:rgba(255,255,255,.18);border-radius:6px;padding:1px 5px}
+.legend{font-size:12px;color:var(--muted);margin-top:10px;line-height:1.5}
+.teamcount{font-size:13px;font-weight:700}
+.tc-g{color:#7d9bff}.tc-c{color:#ff8d92}
+
+/* ---- SCOREBOARD ---- */
+.scoreboard{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:10px;background:linear-gradient(180deg,#111730,#0c1020);border:1px solid var(--line);border-radius:18px;padding:14px 12px}
+.team-head{text-align:center}
+.team-head .nm{font-size:14px;font-weight:800;letter-spacing:1px;text-transform:uppercase}
+.team-head.g .nm{color:#7d9bff}.team-head.c .nm{color:#ff8d92}
+.team-head .pts{font-size:54px;font-weight:900;line-height:1;font-variant-numeric:tabular-nums}
+.team-head .tot{font-size:18px;font-weight:700;color:var(--muted);margin-left:5px;vertical-align:middle}
+.vs{font-size:13px;color:var(--muted);font-weight:800}
+.clock{text-align:center;margin-top:4px;font-size:12px;color:var(--muted)}
+
+.teams{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
+@media(max-width:720px){.teams{grid-template-columns:1fr}.team-head .pts{font-size:42px}}
+.team-col h3{font-size:13px;text-transform:uppercase;letter-spacing:1px;margin-bottom:8px;padding-left:4px}
+.team-col.g h3{color:#7d9bff}.team-col.c h3{color:#ff8d92}
+.pcard{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:11px;margin-bottom:10px}
+.pcard.g{border-left:4px solid var(--granat-soft)}
+.pcard.c{border-left:4px solid var(--czerw-soft)}
+.pcard.flash{animation:flash .5s}
+@keyframes flash{0%{background:var(--accent)}100%{background:var(--panel)}}
+.pcard .top{display:flex;justify-content:space-between;align-items:baseline;gap:8px}
+.pcard .nm{font-size:16px;font-weight:800}
+.pcard .pts{font-size:30px;font-weight:900;font-variant-numeric:tabular-nums}
+.pcard .meta{font-size:11px;color:var(--muted);margin-top:2px}
+.pcard .pct{font-weight:700}
+.pcard .hbadge{font-size:11px;font-weight:800;color:var(--gold);line-height:1.2;margin-top:2px}
+.acts{display:flex;gap:6px;margin-top:9px}
+.acts .btn{flex:1;padding:10px 0;font-size:15px}
+.b2{background:#2f5fa8}.b3{background:#8a3fb0}.bm{background:#5a3140}.ba{background:#2e6b4f}.bz{background:#9a6420}
+.acts .btn.undo{flex:0 0 auto;padding:10px 12px;background:transparent;color:var(--muted);font-size:13px}
+@media(max-width:430px){
+  .wrap{padding:9px}.card{padding:12px}.scoreboard{padding:12px 8px}
+  .acts{display:grid;grid-template-columns:repeat(3,1fr)}
+  .acts .btn.undo{grid-column:1/-1;padding:8px}
+  .foot .btn{flex:1;min-width:145px}
+}
+
+/* voice bar */
+.voicebar{position:sticky;bottom:0;margin-top:14px;background:rgba(15,19,32,.95);backdrop-filter:blur(8px);border:1px solid var(--line);border-radius:16px;padding:12px;display:flex;flex-direction:column;gap:8px}
+.voicebar .line{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.mic{width:54px;height:54px;border-radius:50%;flex:0 0 auto;background:var(--accent2);border:none;color:#fff;font-size:24px;cursor:pointer;display:flex;align-items:center;justify-content:center;transition:.15s}
+.mic.live{background:var(--bad);animation:pulse 1.1s infinite}
+@keyframes pulse{0%{box-shadow:0 0 0 0 rgba(255,93,108,.6)}70%{box-shadow:0 0 0 14px rgba(255,93,108,0)}100%{box-shadow:0 0 0 0 rgba(255,93,108,0)}}
+.vstatus{font-size:13px;color:var(--muted);flex:1;min-width:120px}
+.vstatus b{color:var(--txt)}
+.heard{font-size:13px;background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:6px 10px;min-height:18px}
+.toast{position:fixed;left:50%;top:14px;transform:translateX(-50%);background:var(--accent);color:#15110a;font-weight:800;padding:10px 18px;border-radius:12px;opacity:0;pointer-events:none;transition:.25s;z-index:50;font-size:15px}
+.toast.show{opacity:1}
+.help{font-size:12px;color:var(--muted);line-height:1.6}
+.help code{background:var(--panel2);padding:1px 6px;border-radius:5px;color:var(--gold)}
+.foot{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:14px}
+.statline{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="jsWarning" style="max-width:640px;margin:16px auto;padding:22px;background:#171c2e;color:#f4f6fb;border:2px solid #ff5d6c;border-radius:16px;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;line-height:1.6">
+  <h2 style="margin-bottom:10px">⚠️ Ta strona wymaga JavaScript</h2>
+  <p>Jeśli to widzisz, skrypty się nie uruchomiły — plik prawdopodobnie otworzył się w trybie podglądu (np. Quick Look w aplikacji Pliki na iPadzie: mały pasek z tytułem, ikoną udostępniania i przyciskiem „OK” u góry, „1 rzecz” u dołu), a nie w pełnej przeglądarce.</p>
+  <p><b>Jak otworzyć poprawnie na iPadzie:</b> otwórz najpierw aplikację Safari, potem w aplikacji Pliki (w widoku Split View obok Safari, przeciągnij Pliki z Docka na bok ekranu) przeciągnij ten plik na okno Safari — to zmusi go do otwarcia w pełnej przeglądarce, a nie w podglądzie. Można też wysłać plik przez AirDrop i przy odbiorze wybrać „Otwórz w Safari” zamiast domyślnego podglądu.</p>
+</div>
+<script>try{var jw=document.getElementById("jsWarning");if(jw)jw.remove();}catch(e){}</script>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<div class="wrap">
+
+  <!-- ====================== SETUP ====================== -->
+  <section id="setup">
+    <h1>🏀 Licznik punktów — koszykówka</h1>
+    <div class="sub">Wybierz składy z całej historii zawodników, potem licz punkty głosem lub przyciskami.</div>
+
+    <div class="card">
+      <div class="row" style="justify-content:space-between">
+        <div class="row">
+          <label class="fld">Data meczu<input type="date" id="gameDate"></label>
+          <label class="fld">Długość połowy
+            <select id="halfLen">
+              <option value="8">8 min</option>
+              <option value="10">10 min</option>
+              <option value="12">12 min</option>
+              <option value="15">15 min</option>
+              <option value="20" selected>20 min</option>
+              <option value="25">25 min</option>
+              <option value="30">30 min</option>
+            </select>
+          </label>
+        </div>
+        <div class="row">
+          <span class="teamcount tc-g">Granatowi: <span id="cntG">0</span></span>
+          <span class="teamcount tc-c">Czerwoni: <span id="cntC">0</span></span>
+        </div>
+      </div>
+      <div class="legend">Kliknij zawodnika, by przypisać do <b style="color:#7d9bff">Granatowych</b> → ponowny klik = <b style="color:#ff8d92">Czerwoni</b> → trzeci klik = poza składem. Liczba przy nazwisku to średnia pkt/mecz.</div>
+      <div class="pool" id="pool"></div>
+      <div class="row" style="margin-top:12px">
+        <input type="text" id="newPlayer" placeholder="Dodaj nowego zawodnika…" style="flex:1;min-width:160px">
+        <button class="btn sm" id="addPlayer">+ Dodaj</button>
+      </div>
+    </div>
+
+    <div class="foot">
+      <button class="btn ghost sm" id="clearTeams">Wyczyść składy</button>
+      <button class="btn accent big" id="startGame">Rozpocznij mecz →</button>
+    </div>
+  </section>
+
+  <!-- ====================== GAME ====================== -->
+  <section id="game" class="hidden">
+    <div class="row" style="justify-content:space-between">
+      <button class="btn ghost sm" id="backBtn">← Składy</button>
+      <div class="statline" id="gameInfo"></div>
+      <button class="btn ghost sm" id="resetScore">Zeruj wynik</button>
+    </div>
+
+    <div class="scoreboard" style="margin-top:12px">
+      <div class="team-head g"><div class="nm">Granatowi</div><div class="pts" id="scoreG">0</div></div>
+      <div><div class="vs">VS</div></div>
+      <div class="team-head c"><div class="nm">Czerwoni</div><div class="pts" id="scoreC">0</div></div>
+    </div>
+    <div class="clock" id="leadInfo"></div>
+    <div class="clock" id="halfBreak"></div>
+
+    <div class="clockbar">
+      <div class="half" id="halfLabel">1. połowa</div>
+      <div class="time" id="clockTime">20:00</div>
+      <div class="clockctrl">
+        <button class="btn accent sm" id="clockToggle">▶ Start</button>
+        <button class="btn ghost sm" id="clockReset">⟲ Reset</button>
+        <button class="btn sm" id="nextHalf">Następna połowa →</button>
+      </div>
+    </div>
+
+    <div class="teams">
+      <div class="team-col g"><h3>Granatowi</h3><div id="listG"></div></div>
+      <div class="team-col c"><h3>Czerwoni</h3><div id="listC"></div></div>
+    </div>
+
+    <div class="voicebar">
+      <div class="line">
+        <button class="mic" id="micBtn" title="Mów" aria-label="Włącz mikrofon">🎤</button>
+        <div class="vstatus" id="vstatus" role="status">Naciśnij mikrofon i mów, np. <b>„Kuba dwa”</b>, <b>„Przemek trzy”</b>, <b>„Tomek pudło”</b>, <b>„Andrzej asysta”</b>, <b>„Kuba zbiórka”</b>.</div>
+        <button class="btn sm undo" id="globalUndo">↶ Cofnij ostatnie</button>
+      </div>
+      <div class="heard" id="heard" aria-live="polite"></div>
+      <details>
+        <summary class="help" style="cursor:pointer">Komendy głosowe</summary>
+        <div class="help" style="margin-top:6px">
+          <code>imię + liczba</code> → punkty: „<b>Kuba dwa</b>”, „<b>Przemek trzy</b>” (tylko 2 lub 3).<br>
+          <code>imię + pudło</code> → niecelny rzut: „<b>Tomek pudło</b>” / „niecelny”.<br>
+          <code>imię + asysta</code> → asysta: „<b>Andrzej asysta</b>”.<br>
+          <code>imię + zbiórka</code> → zbiórka: „<b>Kuba zbiórka</b>”.<br>
+          <code>cofnij</code> → usuwa ostatnią akcję.<br>
+          Jeśli kilku graczy ma podobne imię, użyj pełnego (np. „Marcin P”, „Łukasz B”).
+        </div>
+      </details>
+    </div>
+
+    <div class="foot">
+      <div class="row">
+        <button class="btn blue" id="exportCsv">⬇ Pobierz CSV</button>
+        <button class="btn" id="exportJson">⬇ Pobierz JSON</button>
+        <button class="btn ghost sm" id="copyCsv">📋 Kopiuj CSV</button>
+        <button class="btn ghost sm" id="copyJson">📋 Kopiuj JSON</button>
+      </div>
+      <button class="btn ghost sm" id="newGame">Nowy mecz</button>
+    </div>
+  </section>
+
+</div>
+
+<script>
+"use strict";
+/* ---------- Roster z historii (statystyki-zawodnikow.xlsx) ---------- */
+const DEFAULT_ROSTER = [
+  {name:"Przemek",avg:25.8},{name:"Tomek",avg:18.7},{name:"Andrzej",avg:18.1},
+  {name:"Kuba",avg:15.0},{name:"Łukasz B.",avg:15.5},{name:"Marcin P.",avg:12.8},
+  {name:"Krzysztof",avg:12.1},{name:"Marcin O.",avg:11.8},{name:"Bogdan",avg:9.9},
+  {name:"Arek",avg:9.1},{name:"Hubert",avg:8.6},{name:"Fred",avg:4.8},
+  {name:"Irek",avg:3.5},{name:"Paweł",avg:3.6},{name:"Andrzej W.",avg:18.0},
+  {name:"Michał",avg:34.0}
+];
+const LS="koszykowka_scoreboard_v1";
+const $=s=>document.querySelector(s);
+const emptyRecord=()=>Object.create(null);
+const todayISO=()=>{
+  const d=new Date(),pad=n=>String(n).padStart(2,"0");
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+};
+
+/* ---------- State ---------- */
+function freshState(){return {
+  roster:DEFAULT_ROSTER.map(r=>({...r})),assign:emptyRecord(),date:todayISO(),started:false,
+  players:emptyRecord(),log:[],halfLen:20,half:1,remaining:1200,h1snap:null,
+  clockRunning:false,clockEndAt:null
+};}
+function finiteInt(v,min,max,fallback){
+  const n=Number(v);return Number.isFinite(n)?Math.min(max,Math.max(min,Math.round(n))):fallback;
+}
+function normalizeStoredState(raw){
+  if(!raw||typeof raw!=="object")return null;
+  const s=freshState();
+  if(Array.isArray(raw.roster)){
+    const seen=new Set();
+    const roster=raw.roster.map(p=>({
+      name:typeof p?.name==="string"?p.name.trim().slice(0,60):"",
+      avg:Number.isFinite(Number(p?.avg))?Number(p.avg):0
+    })).filter(p=>p.name&&!seen.has(p.name.toLocaleLowerCase("pl"))&&seen.add(p.name.toLocaleLowerCase("pl")));
+    if(roster.length)s.roster=roster;
+  }
+  const rosterNames=new Set(s.roster.map(p=>p.name));
+  if(raw.assign&&typeof raw.assign==="object")Object.keys(raw.assign).forEach(n=>{
+    if(rosterNames.has(n)&&(raw.assign[n]==="G"||raw.assign[n]==="C"))s.assign[n]=raw.assign[n];
+  });
+  s.date=typeof raw.date==="string"&&/^\d{4}-\d{2}-\d{2}$/.test(raw.date)?raw.date:todayISO();
+  s.halfLen=finiteInt(raw.halfLen,8,30,20);
+  s.half=raw.half===2?2:1;
+  s.remaining=finiteInt(raw.remaining,0,s.halfLen*60,s.halfLen*60);
+  if(raw.players&&typeof raw.players==="object")Object.keys(raw.players).forEach(n=>{
+    const p=raw.players[n];
+    if(!rosterNames.has(n)||!p||(p.team!=="G"&&p.team!=="C"))return;
+    s.players[n]={team:p.team,pkt:finiteInt(p.pkt,0,99999,0),celne:finiteInt(p.celne,0,99999,0),niecelne:finiteInt(p.niecelne,0,99999,0),asysty:finiteInt(p.asysty,0,99999,0),zbiorki:finiteInt(p.zbiorki,0,99999,0)};
+  });
+  if(raw.h1snap&&typeof raw.h1snap==="object"){
+    s.h1snap=emptyRecord();
+    Object.keys(s.players).forEach(n=>{
+      const p=raw.h1snap[n];if(!p)return;
+      s.h1snap[n]={pkt:finiteInt(p.pkt,0,s.players[n].pkt,0),celne:finiteInt(p.celne,0,s.players[n].celne,0),niecelne:finiteInt(p.niecelne,0,s.players[n].niecelne,0)};
+    });
+  }
+  if(Array.isArray(raw.log))s.log=raw.log.slice(-5000).map(e=>({
+    name:typeof e?.name==="string"?e.name:"",type:e?.type,val:Number(e?.val),half:e?.half===2?2:(e?.half===1?1:null)
+  })).filter(e=>s.players[e.name]&&(e.type==="miss"||e.type==="assist"||e.type==="rebound"||(e.type==="score"&&[1,2,3].includes(e.val))));
+  // Starsze zapisy nie miały numeru połowy przy akcji. Odtwórz go z migawki statystyk.
+  if(s.h1snap&&s.log.some(e=>e.half==null)){
+    const used=emptyRecord();
+    s.log.forEach(e=>{
+      if(e.type!=="score"&&e.type!=="miss")return;
+      if(!used[e.name])used[e.name]={celne:0,niecelne:0};
+      if(e.half==null){const snap=s.h1snap[e.name]||{celne:0,niecelne:0};
+        e.half=e.type==="score"&&used[e.name].celne<snap.celne?1:
+          e.type==="miss"&&used[e.name].niecelne<snap.niecelne?1:2;
+      }
+      if(e.half===1)used[e.name][e.type==="score"?"celne":"niecelne"]++;
+    });
+  }
+  s.log.forEach(e=>{if(e.half==null)e.half=s.half;});
+  s.started=Boolean(raw.started)&&Object.keys(s.players).length>0;
+  s.clockRunning=Boolean(raw.clockRunning)&&s.started;
+  s.clockEndAt=Number.isFinite(Number(raw.clockEndAt))?Number(raw.clockEndAt):null;
+  if(s.clockRunning&&s.clockEndAt){
+    s.remaining=Math.max(0,Math.ceil((s.clockEndAt-Date.now())/1000));
+    if(!s.remaining){s.clockRunning=false;s.clockEndAt=null;}
+  }else{s.clockRunning=false;s.clockEndAt=null;}
+  return s;
+}
+let state=load()||freshState();
+function save(){try{localStorage.setItem(LS,JSON.stringify(state));}catch(e){}}
+function load(){try{return normalizeStoredState(JSON.parse(localStorage.getItem(LS)));}catch(e){return null;}}
+
+/* ---------- Toast ---------- */
+let toT;
+function toast(msg){const t=$("#toast");t.textContent=msg;t.classList.add("show");clearTimeout(toT);toT=setTimeout(()=>t.classList.remove("show"),1400);}
+
+/* ================= SETUP ================= */
+function renderPool(){
+  if(!Array.isArray(state.roster)||!state.roster.length){state.roster=DEFAULT_ROSTER.map(r=>({...r}));save();}
+  const pool=$("#pool");pool.innerHTML="";
+  state.roster.sort((a,b)=>(b.avg||0)-(a.avg||0));
+  state.roster.forEach(p=>{
+    const t=state.assign[p.name];
+    const el=document.createElement("div");
+    el.className="chip"+(t==="G"?" g":t==="C"?" c":"");
+    const nm=document.createElement("span");nm.textContent=p.name;el.appendChild(nm);
+    const avg=document.createElement("span");avg.className="avg";avg.textContent=(p.avg||0).toFixed(1);el.appendChild(avg);
+    if(t){const tag=document.createElement("span");tag.className="tag";tag.textContent=t==="G"?"GRA":"CZE";el.appendChild(tag);}
+    el.onclick=()=>{
+      const cur=state.assign[p.name];
+      if(!cur)state.assign[p.name]="G";
+      else if(cur==="G")state.assign[p.name]="C";
+      else delete state.assign[p.name];
+      save();renderPool();renderCounts();
+    };
+    pool.appendChild(el);
+  });
+}
+function renderCounts(){
+  const g=Object.values(state.assign).filter(v=>v==="G").length;
+  const c=Object.values(state.assign).filter(v=>v==="C").length;
+  $("#cntG").textContent=g;$("#cntC").textContent=c;
+}
+$("#addPlayer").onclick=()=>{
+  const v=$("#newPlayer").value.trim();
+  if(!v)return;
+  if(v.length>60){toast("Nazwa może mieć maksymalnie 60 znaków");return;}
+  if(["__proto__","prototype","constructor"].includes(v.toLowerCase())){toast("Wpisz inną nazwę zawodnika");return;}
+  if(!state.roster.some(p=>p.name.toLocaleLowerCase("pl")===v.toLocaleLowerCase("pl")))
+    state.roster.push({name:v,avg:0});
+  else {toast("Taki zawodnik już istnieje");return;}
+  $("#newPlayer").value="";save();renderPool();
+};
+$("#newPlayer").addEventListener("keydown",e=>{if(e.key==="Enter")$("#addPlayer").click();});
+$("#clearTeams").onclick=()=>{state.assign=emptyRecord();save();renderPool();renderCounts();};
+$("#gameDate").onchange=e=>{state.date=e.target.value;save();};
+$("#halfLen").onchange=e=>{
+  state.halfLen=parseInt(e.target.value);
+  if(!state.started){state.half=1;state.remaining=state.halfLen*60;}
+  save();renderClock();
+};
+
+$("#startGame").onclick=()=>{
+  const names=Object.keys(state.assign);
+  if(names.length<1){toast("Wybierz najpierw zawodników");return;}
+  if(!state.started){
+    state.players=emptyRecord();
+    names.forEach(n=>state.players[n]={team:state.assign[n],pkt:0,celne:0,niecelne:0,asysty:0,zbiorki:0});
+    state.log=[];state.started=true;
+    state.half=1;state.remaining=state.halfLen*60;state.h1snap=null;state.clockRunning=false;state.clockEndAt=null;
+  } else {
+    // dołącz nowo przypisanych, usuń odznaczonych
+    names.forEach(n=>{if(!state.players[n])state.players[n]={team:state.assign[n],pkt:0,celne:0,niecelne:0,asysty:0,zbiorki:0};else state.players[n].team=state.assign[n];});
+    Object.keys(state.players).forEach(n=>{if(!state.assign[n])delete state.players[n];});
+    state.log=state.log.filter(e=>state.players[e.name]);
+    if(state.h1snap)Object.keys(state.h1snap).forEach(n=>{if(!state.players[n])delete state.h1snap[n];});
+  }
+  save();showGame();
+};
+
+/* ================= GAME ================= */
+function showGame(){$("#setup").classList.add("hidden");$("#game").classList.remove("hidden");renderGame();renderClock();}
+function showSetup(){$("#game").classList.add("hidden");$("#setup").classList.remove("hidden");$("#halfLen").disabled=state.started;renderPool();renderCounts();}
+
+function teamPts(t){return Object.values(state.players).filter(p=>p.team===t).reduce((s,p)=>s+p.pkt,0);}
+function teamH1(t){if(!state.h1snap)return teamPts(t);return Object.keys(state.players).filter(n=>state.players[n].team===t).reduce((s,n)=>s+((state.h1snap[n]&&state.h1snap[n].pkt)||0),0);}
+function teamH2(t){if(!state.h1snap)return 0;return teamPts(t)-teamH1(t);}
+function pct(p){const a=p.celne+p.niecelne;return a?Math.round(p.celne/a*100):0;}
+
+function renderGame(){
+  $("#gameInfo").textContent="Mecz: "+state.date;
+  if(state.h1snap){
+    $("#scoreG").innerHTML=`${teamH2("G")}<span class="tot">(${teamPts("G")})</span>`;
+    $("#scoreC").innerHTML=`${teamH2("C")}<span class="tot">(${teamPts("C")})</span>`;
+  } else {
+    $("#scoreG").textContent=teamPts("G");
+    $("#scoreC").textContent=teamPts("C");
+  }
+  const dg=teamPts("G"),dc=teamPts("C");
+  $("#leadInfo").textContent = dg===dc?"Remis":(dg>dc?`Granatowi prowadzą +${dg-dc}`:`Czerwoni prowadzą +${dc-dg}`);
+  $("#halfBreak").textContent = state.h1snap
+    ? `1. poł.  G ${teamH1("G")} — C ${teamH1("C")}    ·    2. poł.  G ${teamH2("G")} — C ${teamH2("C")}`
+    : "";
+
+  ["G","C"].forEach(t=>{
+    const box=t==="G"?$("#listG"):$("#listC");
+    box.innerHTML="";
+    const names=Object.keys(state.players).filter(n=>state.players[n].team===t)
+      .sort((a,b)=>state.players[b].pkt-state.players[a].pkt);
+    if(!names.length){box.innerHTML='<div class="statline" style="padding:8px">Brak zawodników</div>';}
+    names.forEach(n=>{
+      const p=state.players[n];
+      const snap=state.h1snap?(state.h1snap[n]||{pkt:0,celne:0,niecelne:0}):null;
+      const h1p=snap?snap.pkt:null;
+      const h2p=snap?p.pkt-snap.pkt:null;
+      const el=document.createElement("div");
+      el.className="pcard "+(t==="G"?"g":"c");
+      el.dataset.name=n;
+      el.innerHTML=`
+        <div class="top"><div class="nm"></div>
+          <div style="text-align:right"><div class="pts">${p.pkt}</div>${h2p!=null?`<div class="hbadge">2. poł: ${h2p}</div>`:""}</div></div>
+        <div class="meta">Celne ${p.celne} · Niecelne ${p.niecelne} · <span class="pct">Sk. ${pct(p)}%</span> · A ${p.asysty} · Zb ${p.zbiorki}${h1p!=null?` · 1.poł ${h1p} / łącznie ${p.pkt}`:""}</div>
+        <div class="acts">
+          <button class="btn b2" data-a="2">+2</button>
+          <button class="btn b3" data-a="3">+3</button>
+          <button class="btn bm" data-a="m">PUDŁO</button>
+          <button class="btn ba" data-a="a">ASYSTA</button>
+          <button class="btn bz" data-a="z">ZBIÓRKA</button>
+          <button class="btn undo" data-a="u">↶</button>
+        </div>`;
+      el.querySelector(".nm").textContent=n;
+      el.querySelectorAll("button").forEach(b=>{
+        b.onclick=()=>{const a=b.dataset.a;
+          if(a==="m")addMiss(n);
+          else if(a==="a")addAssist(n);
+          else if(a==="z")addRebound(n);
+          else if(a==="u")undoPlayer(n);
+          else addScore(n,parseInt(a));
+        };
+      });
+      box.appendChild(el);
+    });
+  });
+}
+
+function flash(name){const el=document.querySelector(`.pcard[data-name="${CSS.escape(name)}"]`);if(el){el.classList.remove("flash");void el.offsetWidth;el.classList.add("flash");}}
+
+function addScore(name,val){
+  const p=state.players[name];if(!p)return;
+  p.pkt+=val;p.celne+=1;
+  state.log.push({name,type:"score",val,half:state.half});
+  save();renderGame();flash(name);toast(`${name} +${val}`);
+}
+function addMiss(name){
+  const p=state.players[name];if(!p)return;
+  p.niecelne+=1;
+  state.log.push({name,type:"miss",val:0,half:state.half});
+  save();renderGame();toast(`${name} — pudło`);
+}
+function addAssist(name){
+  const p=state.players[name];if(!p)return;
+  p.asysty=(p.asysty||0)+1;
+  state.log.push({name,type:"assist",val:0,half:state.half});
+  save();renderGame();flash(name);toast(`${name} — asysta`);
+}
+function addRebound(name){
+  const p=state.players[name];if(!p)return;
+  p.zbiorki=(p.zbiorki||0)+1;
+  state.log.push({name,type:"rebound",val:0,half:state.half});
+  save();renderGame();flash(name);toast(`${name} — zbiórka`);
+}
+function undoLast(){
+  const last=state.log.pop();if(!last){toast("Nic do cofnięcia");return;}
+  applyUndo(last);save();renderGame();toast("Cofnięto");
+}
+function undoPlayer(name){
+  for(let i=state.log.length-1;i>=0;i--){if(state.log[i].name===name){const e=state.log.splice(i,1)[0];applyUndo(e);save();renderGame();toast(`Cofnięto: ${name}`);return;}}
+  toast("Brak akcji gracza");
+}
+function applyUndo(e){
+  const p=state.players[e.name];if(!p)return;
+  if(e.type==="score"){p.pkt=Math.max(0,p.pkt-e.val);p.celne=Math.max(0,p.celne-1);}
+  else if(e.type==="miss")p.niecelne=Math.max(0,p.niecelne-1);
+  else if(e.type==="assist"){p.asysty=Math.max(0,(p.asysty||0)-1);return;}
+  else if(e.type==="rebound"){p.zbiorki=Math.max(0,(p.zbiorki||0)-1);return;}
+  // Cofnięcie rzutu z 1. połowy po przerwie musi też skorygować migawkę 1. połowy.
+  const snap=state.h1snap&&state.h1snap[e.name];
+  if(snap&&e.half===1){
+    if(e.type==="score"){snap.pkt=Math.max(0,snap.pkt-e.val);snap.celne=Math.max(0,snap.celne-1);}
+    else if(e.type==="miss")snap.niecelne=Math.max(0,snap.niecelne-1);
+  }
+}
+
+/* ================= ZEGAR / POŁOWY ================= */
+let clockInt=null;
+function fmt(sec){sec=Math.max(0,sec|0);const m=Math.floor(sec/60),s=sec%60;return m+":"+String(s).padStart(2,"0");}
+function syncClock(){
+  if(state.clockRunning&&state.clockEndAt)state.remaining=Math.max(0,Math.ceil((state.clockEndAt-Date.now())/1000));
+}
+function renderClock(){
+  const lbl=$("#halfLabel"),tm=$("#clockTime"),btn=$("#clockToggle");
+  if(!lbl)return;
+  syncClock();
+  lbl.textContent=state.half+". połowa";
+  tm.textContent=fmt(state.remaining);
+  tm.className="time"+(state.clockRunning?(state.remaining<=60?" ending":" run"):(state.remaining<=0?" done":""));
+  btn.textContent=state.clockRunning?"⏸ Pauza":"▶ Start";
+  $("#nextHalf").disabled = state.half>=2;
+  $("#nextHalf").style.opacity = state.half>=2?".4":"1";
+}
+function beep(){try{const a=new (window.AudioContext||window.webkitAudioContext)();const o=a.createOscillator(),g=a.createGain();o.connect(g);g.connect(a.destination);o.type="square";o.frequency.value=660;g.gain.value=.2;o.start();setTimeout(()=>{o.frequency.value=440;},250);setTimeout(()=>{o.stop();a.close();},600);}catch(e){}}
+function finishClock(){
+  if(clockInt){clearInterval(clockInt);clockInt=null;}
+  state.remaining=0;state.clockRunning=false;state.clockEndAt=null;save();renderClock();beep();
+  toast("⏱ Koniec "+state.half+". połowy");
+}
+function clockTick(){
+  const before=state.remaining;syncClock();
+  if(state.remaining<=0){finishClock();return;}
+  renderClock();if(state.remaining!==before&&state.remaining%5===0)save();
+}
+function startClock(){
+  if(clockInt)return;
+  if(state.remaining<=0){toast("Połowa zakończona — kliknij „Następna połowa”");return;}
+  if(!state.clockRunning||!state.clockEndAt){state.clockRunning=true;state.clockEndAt=Date.now()+state.remaining*1000;save();}
+  clockInt=setInterval(clockTick,250);renderClock();
+}
+function pauseClock(){
+  syncClock();if(clockInt){clearInterval(clockInt);clockInt=null;}
+  state.clockRunning=false;state.clockEndAt=null;save();renderClock();
+}
+function toggleClock(){state.clockRunning?pauseClock():startClock();}
+function resetHalf(){pauseClock();state.remaining=state.halfLen*60;save();renderClock();}
+function nextHalf(){
+  if(state.half>=2){toast("To już druga połowa");return;}
+  pauseClock();
+  state.h1snap=emptyRecord();
+  Object.keys(state.players).forEach(n=>{const p=state.players[n];state.h1snap[n]={pkt:p.pkt,celne:p.celne,niecelne:p.niecelne};});
+  state.half=2;state.remaining=state.halfLen*60;save();renderClock();renderGame();
+  toast("2. połowa — licznik połowy od zera, suma leci dalej");
+}
+$("#clockToggle").onclick=toggleClock;
+$("#clockReset").onclick=()=>{if(confirm("Zresetować czas tej połowy?"))resetHalf();};
+$("#nextHalf").onclick=nextHalf;
+
+$("#backBtn").onclick=()=>{pauseClock();showSetup();};
+$("#globalUndo").onclick=undoLast;
+$("#resetScore").onclick=()=>{if(confirm("Wyzerować cały wynik i czas meczu?")){pauseClock();Object.values(state.players).forEach(p=>{p.pkt=0;p.celne=0;p.niecelne=0;p.asysty=0;p.zbiorki=0;});state.log=[];state.h1snap=null;state.half=1;state.remaining=state.halfLen*60;save();renderGame();renderClock();}};
+$("#newGame").onclick=()=>{if(confirm("Zakończyć i rozpocząć nowy mecz? (najpierw wyeksportuj wynik)")){pauseClock();state.started=false;state.players=emptyRecord();state.log=[];state.half=1;state.remaining=state.halfLen*60;state.h1snap=null;save();showSetup();}};
+
+/* ================= EKSPORT ================= */
+function buildRows(){
+  const winG=teamPts("G"),winC=teamPts("C");
+  const wynikG=winG===winC?"Remis":(winG>winC?"Wygrana":"Przegrana");
+  const wynikC=winG===winC?"Remis":(winC>winG?"Wygrana":"Przegrana");
+  const rows=[];
+  Object.keys(state.players).forEach(n=>{
+    const p=state.players[n];const a=p.celne+p.niecelne;
+    const snap=state.h1snap?(state.h1snap[n]||{pkt:0}):null;
+    const h1=snap?snap.pkt:p.pkt;const h2=snap?p.pkt-snap.pkt:0;
+    rows.push({
+      data:state.date,
+      druzyna:p.team==="G"?"Granatowi":"Czerwoni",
+      zawodnik:n,punkty:p.pkt,punkty1:h1,punkty2:h2,celne:p.celne,niecelne:p.niecelne,
+      asysty:p.asysty||0,zbiorki:p.zbiorki||0,
+      skutecznosc:a?+(p.celne/a).toFixed(3):0,
+      wynik:p.team==="G"?wynikG:wynikC
+    });
+  });
+  return rows;
+}
+async function download(fname,text,mime){
+  // W hostowanej wersji (Artifact) zwykłe pobieranie plików jest zablokowane —
+  // spróbuj oddać plik przez capability "downloads" (natywny zapis / udostępnianie),
+  // a jeśli jej nie ma (zwykły plik lokalny / serwer), użyj klasycznego pobierania.
+  try{
+    if(window.claude && window.claude.use){
+      const downloads=await window.claude.use("downloads");
+      if(downloads){
+        const res=await downloads.save({filename:fname,data:text});
+        toast(res.status==="delivered"?`Wysłano ${fname}`:`Zapisano ${fname}`);
+        return;
+      }
+    }
+  }catch(e){
+    if(e&&e.code==="declined")return;
+    if(e&&e.code&&e.code!=="unavailable"&&e.code!=="not_granted"){
+      toast("Nie udało się zapisać — spróbuj przycisku Kopiuj");
+      return;
+    }
+  }
+  const blob=new Blob([text],{type:mime});const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");a.href=url;a.download=fname;document.body.appendChild(a);a.click();
+  setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},500);
+  toast(`Pobrano ${fname}`);
+}
+function csvCell(value){
+  let s=String(value??"");
+  if(/^[=+\-@]/.test(s))s="'"+s; // Excel: nie uruchamiaj formuł wpisanych jako nazwa zawodnika.
+  return /[;"\r\n]/.test(s)?`"${s.replace(/"/g,'""')}"`:s;
+}
+function buildExport(){
+  const rows=buildRows();
+  if(!rows.length)return null;
+  const winG=teamPts("G"),winC=teamPts("C");
+  // CSV zgodny z arkuszem "Wyniki"
+  const head=["Data","Drużyna","Zawodnik","Punkty","Pkt 1. poł.","Pkt 2. poł.","Celne kosze","Niecelne","Asysty","Zbiórki","Skuteczność","Wynik meczu","Uwagi"];
+  const lines=[head.map(csvCell).join(";")];
+  rows.forEach(r=>lines.push([r.data,r.druzyna,r.zawodnik,r.punkty,r.punkty1,r.punkty2,r.celne,r.niecelne,r.asysty,r.zbiorki,
+     (r.skutecznosc*100).toFixed(0)+"%",r.wynik,"licznik na żywo"].map(csvCell).join(";")));
+  const csv="﻿"+lines.join("\r\n");
+  const json=JSON.stringify({
+    mecz:{data:state.date,granatowi:winG,czerwoni:winC,
+      zwyciezca:winG===winC?"Remis":(winG>winC?"Granatowi":"Czerwoni"),roznica:Math.abs(winG-winC)},
+    rows:rows
+  },null,2);
+  const stamp=(state.date||todayISO()).replace(/-/g,"");
+  return {csv,json,stamp};
+}
+$("#exportCsv").onclick=async()=>{
+  const out=buildExport();if(!out){toast("Brak danych");return;}
+  await download(`mecz_${out.stamp}.csv`,out.csv,"text/csv;charset=utf-8");
+};
+$("#exportJson").onclick=async()=>{
+  const out=buildExport();if(!out){toast("Brak danych");return;}
+  await download(`mecz_${out.stamp}.json`,out.json,"application/json");
+};
+
+/* Kopiowanie do schowka — przydatne tam, gdzie pobieranie pliku jest zablokowane (np. hostowana wersja na iPada). */
+async function copyText(text,label){
+  try{
+    await navigator.clipboard.writeText(text);
+    toast(`Skopiowano ${label} do schowka`);
+  }catch(e){
+    let ok=false;
+    try{
+      const ta=document.createElement("textarea");
+      ta.value=text;ta.style.position="fixed";ta.style.left="-9999px";
+      document.body.appendChild(ta);ta.focus();ta.select();
+      ok=document.execCommand("copy");
+      document.body.removeChild(ta);
+    }catch(e2){ok=false;}
+    if(ok)toast(`Skopiowano ${label} do schowka`);
+    else window.prompt(`Nie udało się skopiować automatycznie — zaznacz poniżej i skopiuj ręcznie (${label}):`,text);
+  }
+}
+$("#copyCsv").onclick=()=>{const out=buildExport();if(!out){toast("Brak danych");return;}copyText(out.csv,"CSV");};
+$("#copyJson").onclick=()=>{const out=buildExport();if(!out){toast("Brak danych");return;}copyText(out.json,"JSON");};
+
+/* ================= GŁOS ================= */
+const SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+let rec=null,listening=false;
+const NUMW={"dwa":2,"dwie":2,"dwója":2,"dwójka":2,"za dwa":2,
+  "trzy":3,"trójka":3,"trója":3,"za trzy":3};
+const MISSW=["pudło","pudlo","niecelny","niecelne","spudłował","spudlowal","obok","minus"];
+const ASSISTW=["asysta","asyste","asystę","asysty","podanie","asyst"];
+const REBOUNDW=["zbiórka","zbiorka","zbiórkę","zbiorke","zbiórki","zbiorki","zbiórka","zbierka"];
+
+function normalize(s){return String(s).toLocaleLowerCase("pl").normalize("NFD")
+  .replace(/[\u0300-\u036f]/g,"").replace(/ł/g,"l").replace(/[^a-z0-9\s]/g," ").replace(/\s+/g," ").trim();}
+function hasPhrase(text,phrase){return (` ${text} `).includes(` ${normalize(phrase)} `);}
+function matchPlayer(text){
+  const names=Object.keys(state.players);
+  let best=null,bestLen=-1;
+  names.forEach(n=>{
+    const key=normalize(n).replace(/\s+/g," ");
+    const base=key.split(" ")[0];
+    if(hasPhrase(text,key)&&key.length>bestLen){best=n;bestLen=key.length;}
+    else if(hasPhrase(text,base)&&base.length>bestLen){best=n;bestLen=base.length;}
+  });
+  return best;
+}
+function parseCommand(raw){
+  const t=normalize(raw);
+  if(hasPhrase(t,"cofnij")||hasPhrase(t,"cofnąć")){undoLast();return true;}
+  const name=matchPlayer(t);
+  if(!name){$("#heard").textContent=`„${raw}” — nie rozpoznano gracza`;return false;}
+  if(MISSW.some(w=>hasPhrase(t,w))){addMiss(name);$("#heard").textContent=`✓ ${name} — pudło`;return true;}
+  if(ASSISTW.some(w=>hasPhrase(t,w))){addAssist(name);$("#heard").textContent=`✓ ${name} — asysta`;return true;}
+  if(REBOUNDW.some(w=>hasPhrase(t,w))){addRebound(name);$("#heard").textContent=`✓ ${name} — zbiórka`;return true;}
+  let val=null;
+  for(const w in NUMW){if(hasPhrase(t,w)){if(val===null||NUMW[w]>val)val=NUMW[w];}}
+  const m=t.match(/\b([23])\b/);if(m)val=parseInt(m[1]);
+  if(val&&val>=2&&val<=3){addScore(name,val);$("#heard").textContent=`✓ ${name} +${val}`;return true;}
+  $("#heard").textContent=`„${raw}” — rozpoznano ${name}, ale brak komendy (2/3, „pudło”, „asysta”, „zbiórka”)`;
+  return false;
+}
+function setupRec(){
+  if(!SR){$("#micBtn").disabled=true;$("#vstatus").innerHTML="⚠️ Ta przeglądarka nie obsługuje rozpoznawania mowy. Użyj przycisków na kartach.";return;}
+  if(location.protocol==="file:")$("#vstatus").innerHTML="⚠️ Mikrofon może nie działać po dwukliku. Uruchom aplikację plikiem <b>URUCHOM.command</b>.";
+  rec=new SR();rec.lang="pl-PL";rec.continuous=true;rec.interimResults=true;
+  rec.onresult=e=>{
+    let interim="",fin="";
+    for(let i=e.resultIndex;i<e.results.length;i++){
+      const tr=e.results[i][0].transcript;
+      if(e.results[i].isFinal)fin+=tr;else interim+=tr;
+    }
+    if(interim)$("#heard").textContent="… "+interim;
+    if(fin)parseCommand(fin);
+  };
+  rec.onerror=ev=>{
+    if(ev.error==="not-allowed"||ev.error==="service-not-allowed")stopRec("🎤 Brak dostępu do mikrofonu. Zezwól w przeglądarce lub użyj przycisków.");
+    else if(ev.error==="audio-capture")stopRec("🎤 Nie znaleziono działającego mikrofonu.");
+    else if(ev.error==="network")stopRec("🎤 Rozpoznawanie mowy jest chwilowo niedostępne. Przyciski nadal działają.");
+  };
+  rec.onend=()=>{if(listening){try{rec.start();}catch(e){}}};
+}
+function startRec(){if(!rec)return;listening=true;try{rec.start();}catch(e){listening=false;$("#vstatus").textContent="Nie udało się uruchomić mikrofonu. Spróbuj ponownie.";return;}$("#micBtn").classList.add("live");$("#micBtn").setAttribute("aria-label","Wyłącz mikrofon");$("#vstatus").innerHTML="🔴 <b>Słucham…</b> mów: imię + liczba (np. „Kuba dwa”) lub „pudło”.";}
+function stopRec(message){listening=false;$("#micBtn").classList.remove("live");$("#micBtn").setAttribute("aria-label","Włącz mikrofon");if(rec){try{rec.stop();}catch(e){}}$("#vstatus").textContent=message||"Mikrofon wyłączony. Naciśnij, by mówić.";}
+$("#micBtn").onclick=()=>{listening?stopRec():startRec();};
+
+/* ================= INIT ================= */
+function showInitError(err){
+  try{
+    console.error(err);
+    const msg=(err&&(err.message||err.toString()))||"nieznany błąd";
+    const pool=$("#pool");
+    if(pool)pool.innerHTML=`<div style="color:var(--bad);font-size:13px;padding:10px;border:1px solid var(--bad);border-radius:10px">⚠️ Błąd ładowania listy zawodników: ${msg}.<br>Sprawdź, czy strona jest otwarta w pełnej przeglądarce Safari (nie w podglądzie pliku / Quick Look).</div>`;
+  }catch(e){}
+}
+window.addEventListener("error",e=>{if(!document.querySelector("#pool")?.children.length)showInitError(e.error||e.message);});
+try{
+  $("#gameDate").value=state.date||todayISO();
+  $("#halfLen").value=state.halfLen;
+  renderPool();renderCounts();setupRec();renderClock();
+  document.addEventListener("visibilitychange",()=>{if(!document.hidden&&state.clockRunning)clockTick();});
+  if(state.started){showGame();if(state.clockRunning)startClock();}
+  else $("#halfLen").disabled=false;
+}catch(err){showInitError(err);}
+</script>
+</body>
+</html>
